@@ -12,12 +12,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/ioctl.h>
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
 
 static int fb = -1;
+static uint8_t *fb_map = NULL;
 static lyr_fb_info_t fb_info;
 static struct timespec start_time = { 0 };
 
@@ -74,6 +76,11 @@ static void restore_terminal(void)
 		kbd_valid = 0;
 	}
 
+	if (fb_map) {
+		munmap(fb_map, fb_info.size);
+		fb_map = NULL;
+	}
+
 	if (fb >= 0) {
 		close(fb);
 		fb = -1;
@@ -103,24 +110,48 @@ static void setup_terminal(void)
 
 	if (lyr_kbd_open(&kbd) == 0)
 		kbd_valid = 1;
+
 	if (kbd_valid)
 		lyr_kbd_flush(&kbd);
 }
 
+/*
+ * Modern Doom keyboard layout.
+ *
+ * Movement:
+ *   W             forward
+ *   S             backward
+ *   A             strafe left
+ *   D             strafe right
+ *   Left arrow    turn left
+ *   Right arrow   turn right
+ *
+ * Actions:
+ *   Space         fire
+ *   Ctrl          fire, alternate
+ *   E             use/open
+ *   Shift         run
+ *
+ * Menu/system:
+ *   Esc           menu
+ *   Enter         confirm
+ *   Tab           automap
+ *
+ * Weapons:
+ *   1-0           weapon slots
+ *
+ * Doom key values are mostly physical key identifiers, not translated text.
+ * For ordinary letters, Doom expects uppercase ASCII.
+ */
 static unsigned char map_lyr_key_event(const lyr_key_event_t *ev)
 {
-	uint16_t keycode = ev->keycode;
-	int shift = lyr_key_shift(*ev) != 0;
-	int caps = lyr_key_caps(*ev) != 0;
-
-	switch (keycode) {
+	switch (ev->keycode) {
 	case LYR_KEY_ESC:
 		return KEY_ESCAPE;
 
 	case LYR_KEY_ENTER:
-		return KEY_ENTER;
 	case LYR_KEY_KPENTER:
-		return KEYP_ENTER;
+		return KEY_ENTER;
 
 	case LYR_KEY_TAB:
 		return KEY_TAB;
@@ -128,203 +159,315 @@ static unsigned char map_lyr_key_event(const lyr_key_event_t *ev)
 	case LYR_KEY_BACKSPACE:
 		return KEY_BACKSPACE;
 
-	case LYR_KEY_SPACE:
-		return ' ';
-
-	case LYR_KEY_UP:
+	/*
+	 * Modern movement.
+	 */
+	case LYR_KEY_W:
 		return KEY_UPARROW;
-	case LYR_KEY_DOWN:
+
+	case LYR_KEY_S:
 		return KEY_DOWNARROW;
+
+	case LYR_KEY_A:
+		return KEY_STRAFE_L;
+
+	case LYR_KEY_D:
+		return KEY_STRAFE_R;
+
 	case LYR_KEY_LEFT:
 		return KEY_LEFTARROW;
+
 	case LYR_KEY_RIGHT:
 		return KEY_RIGHTARROW;
 
-	case LYR_KEY_F1:
-		return KEY_F1;
-	case LYR_KEY_F2:
-		return KEY_F2;
-	case LYR_KEY_F3:
-		return KEY_F3;
-	case LYR_KEY_F4:
-		return KEY_F4;
-	case LYR_KEY_F5:
-		return KEY_F5;
-	case LYR_KEY_F6:
-		return KEY_F6;
-	case LYR_KEY_F7:
-		return KEY_F7;
-	case LYR_KEY_F8:
-		return KEY_F8;
-	case LYR_KEY_F9:
-		return KEY_F9;
-	case LYR_KEY_F10:
-		return KEY_F10;
-	case LYR_KEY_F11:
-		return KEY_F11;
-	case LYR_KEY_F12:
-		return KEY_F12;
+	/*
+	 * Optional arrow-key forward/backward support.
+	 * This is not the primary layout, but keeps menu/navigation behavior sane.
+	 */
+	case LYR_KEY_UP:
+		return KEY_UPARROW;
+
+	case LYR_KEY_DOWN:
+		return KEY_DOWNARROW;
+
+	/*
+	 * Modern actions.
+	 */
+	case LYR_KEY_SPACE:
+		return KEY_FIRE;
+
+	case LYR_KEY_LEFTCTRL:
+	case LYR_KEY_RIGHTCTRL:
+		return KEY_FIRE;
+
+	case LYR_KEY_E:
+		return KEY_USE;
 
 	case LYR_KEY_LEFTSHIFT:
 	case LYR_KEY_RIGHTSHIFT:
 		return KEY_RSHIFT;
 
-	case LYR_KEY_LEFTCTRL:
-	case LYR_KEY_RIGHTCTRL:
-		return KEY_RCTRL;
-
+	/*
+	 * Alt remains available as a Doom-recognized modifier key.
+	 */
 	case LYR_KEY_LEFTALT:
 	case LYR_KEY_RIGHTALT:
 		return KEY_RALT;
 
+	/*
+	 * Function keys.
+	 */
+	case LYR_KEY_F1:
+		return KEY_F1;
+
+	case LYR_KEY_F2:
+		return KEY_F2;
+
+	case LYR_KEY_F3:
+		return KEY_F3;
+
+	case LYR_KEY_F4:
+		return KEY_F4;
+
+	case LYR_KEY_F5:
+		return KEY_F5;
+
+	case LYR_KEY_F6:
+		return KEY_F6;
+
+	case LYR_KEY_F7:
+		return KEY_F7;
+
+	case LYR_KEY_F8:
+		return KEY_F8;
+
+	case LYR_KEY_F9:
+		return KEY_F9;
+
+	case LYR_KEY_F10:
+		return KEY_F10;
+
+	case LYR_KEY_F11:
+		return KEY_F11;
+
+	case LYR_KEY_F12:
+		return KEY_F12;
+
+	/*
+	 * Lock keys.
+	 */
 	case LYR_KEY_CAPSLOCK:
 		return KEY_CAPSLOCK;
+
 	case LYR_KEY_NUMLOCK:
 		return KEY_NUMLOCK;
+
 	case LYR_KEY_SCROLLLOCK:
 		return KEY_SCRLCK;
 
+	/*
+	 * Navigation block.
+	 */
 	case LYR_KEY_HOME:
 		return KEY_HOME;
+
 	case LYR_KEY_END:
 		return KEY_END;
+
 	case LYR_KEY_PAGEUP:
 		return KEY_PGUP;
+
 	case LYR_KEY_PAGEDOWN:
 		return KEY_PGDN;
+
 	case LYR_KEY_INSERT:
 		return KEY_INS;
+
 	case LYR_KEY_DELETE:
 		return KEY_DEL;
 
+	/*
+	 * Keypad.
+	 */
 	case LYR_KEY_KP0:
 		return KEYP_0;
+
 	case LYR_KEY_KP1:
 		return KEYP_1;
+
 	case LYR_KEY_KP2:
 		return KEYP_2;
+
 	case LYR_KEY_KP3:
 		return KEYP_3;
+
 	case LYR_KEY_KP4:
 		return KEYP_4;
+
 	case LYR_KEY_KP5:
 		return KEYP_5;
+
 	case LYR_KEY_KP6:
 		return KEYP_6;
+
 	case LYR_KEY_KP7:
 		return KEYP_7;
+
 	case LYR_KEY_KP8:
 		return KEYP_8;
+
 	case LYR_KEY_KP9:
 		return KEYP_9;
+
 	case LYR_KEY_KPSLASH:
 		return KEYP_DIVIDE;
+
 	case LYR_KEY_KPPLUS:
 		return KEYP_PLUS;
+
 	case LYR_KEY_KPMINUS:
 		return KEYP_MINUS;
+
 	case LYR_KEY_KPASTERISK:
 		return KEYP_MULTIPLY;
+
 	case LYR_KEY_KPDOT:
 		return KEYP_PERIOD;
 
-	case LYR_KEY_MINUS:
-		return shift ? '_' : KEY_MINUS;
-	case LYR_KEY_EQUAL:
-		return shift ? '+' : KEY_EQUALS;
-
+	/*
+	 * Number row: weapon slots.
+	 */
 	case LYR_KEY_1:
-		return shift ? '!' : '1';
+		return '1';
+
 	case LYR_KEY_2:
-		return shift ? '@' : '2';
+		return '2';
+
 	case LYR_KEY_3:
-		return shift ? '#' : '3';
+		return '3';
+
 	case LYR_KEY_4:
-		return shift ? '$' : '4';
+		return '4';
+
 	case LYR_KEY_5:
-		return shift ? '%' : '5';
+		return '5';
+
 	case LYR_KEY_6:
-		return shift ? '^' : '6';
+		return '6';
+
 	case LYR_KEY_7:
-		return shift ? '&' : '7';
+		return '7';
+
 	case LYR_KEY_8:
-		return shift ? '*' : '8';
+		return '8';
+
 	case LYR_KEY_9:
-		return shift ? '(' : '9';
+		return '9';
+
 	case LYR_KEY_0:
-		return shift ? ')' : '0';
+		return '0';
 
+	case LYR_KEY_MINUS:
+		return KEY_MINUS;
+
+	case LYR_KEY_EQUAL:
+		return KEY_EQUALS;
+
+	/*
+	 * Ordinary letter keys not used by the fixed modern layout.
+	 */
 	case LYR_KEY_Q:
-		return (shift ^ caps) ? 'Q' : 'q';
-	case LYR_KEY_W:
-		return (shift ^ caps) ? 'W' : 'w';
-	case LYR_KEY_E:
-		return (shift ^ caps) ? 'E' : 'e';
-	case LYR_KEY_R:
-		return (shift ^ caps) ? 'R' : 'r';
-	case LYR_KEY_T:
-		return (shift ^ caps) ? 'T' : 't';
-	case LYR_KEY_Y:
-		return (shift ^ caps) ? 'Y' : 'y';
-	case LYR_KEY_U:
-		return (shift ^ caps) ? 'U' : 'u';
-	case LYR_KEY_I:
-		return (shift ^ caps) ? 'I' : 'i';
-	case LYR_KEY_O:
-		return (shift ^ caps) ? 'O' : 'o';
-	case LYR_KEY_P:
-		return (shift ^ caps) ? 'P' : 'p';
-	case LYR_KEY_A:
-		return (shift ^ caps) ? 'A' : 'a';
-	case LYR_KEY_S:
-		return (shift ^ caps) ? 'S' : 's';
-	case LYR_KEY_D:
-		return (shift ^ caps) ? 'D' : 'd';
-	case LYR_KEY_F:
-		return (shift ^ caps) ? 'F' : 'f';
-	case LYR_KEY_G:
-		return (shift ^ caps) ? 'G' : 'g';
-	case LYR_KEY_H:
-		return (shift ^ caps) ? 'H' : 'h';
-	case LYR_KEY_J:
-		return (shift ^ caps) ? 'J' : 'j';
-	case LYR_KEY_K:
-		return (shift ^ caps) ? 'K' : 'k';
-	case LYR_KEY_L:
-		return (shift ^ caps) ? 'L' : 'l';
-	case LYR_KEY_Z:
-		return (shift ^ caps) ? 'Z' : 'z';
-	case LYR_KEY_X:
-		return (shift ^ caps) ? 'X' : 'x';
-	case LYR_KEY_C:
-		return (shift ^ caps) ? 'C' : 'c';
-	case LYR_KEY_V:
-		return (shift ^ caps) ? 'V' : 'v';
-	case LYR_KEY_B:
-		return (shift ^ caps) ? 'B' : 'b';
-	case LYR_KEY_N:
-		return (shift ^ caps) ? 'N' : 'n';
-	case LYR_KEY_M:
-		return (shift ^ caps) ? 'M' : 'm';
+		return 'Q';
 
+	case LYR_KEY_R:
+		return 'R';
+
+	case LYR_KEY_T:
+		return 'T';
+
+	case LYR_KEY_Y:
+		return 'Y';
+
+	case LYR_KEY_U:
+		return 'U';
+
+	case LYR_KEY_I:
+		return 'I';
+
+	case LYR_KEY_O:
+		return 'O';
+
+	case LYR_KEY_P:
+		return 'P';
+
+	case LYR_KEY_F:
+		return 'F';
+
+	case LYR_KEY_G:
+		return 'G';
+
+	case LYR_KEY_H:
+		return 'H';
+
+	case LYR_KEY_J:
+		return 'J';
+
+	case LYR_KEY_K:
+		return 'K';
+
+	case LYR_KEY_L:
+		return 'L';
+
+	case LYR_KEY_Z:
+		return 'Z';
+
+	case LYR_KEY_X:
+		return 'X';
+
+	case LYR_KEY_C:
+		return 'C';
+
+	case LYR_KEY_V:
+		return 'V';
+
+	case LYR_KEY_B:
+		return 'B';
+
+	case LYR_KEY_N:
+		return 'N';
+
+	case LYR_KEY_M:
+		return 'M';
+
+	/*
+	 * Punctuation keys.
+	 */
 	case LYR_KEY_LEFTBRACE:
-		return shift ? '{' : '[';
+		return '[';
+
 	case LYR_KEY_RIGHTBRACE:
-		return shift ? '}' : ']';
+		return ']';
+
 	case LYR_KEY_BACKSLASH:
-		return shift ? '|' : '\\';
+		return '\\';
+
 	case LYR_KEY_SEMICOLON:
-		return shift ? ':' : ';';
+		return ';';
+
 	case LYR_KEY_APOSTROPHE:
-		return shift ? '"' : '\'';
+		return '\'';
+
 	case LYR_KEY_GRAVE:
-		return shift ? '~' : '`';
+		return '`';
+
 	case LYR_KEY_COMMA:
-		return shift ? '<' : ',';
+		return ',';
+
 	case LYR_KEY_DOT:
-		return shift ? '>' : '.';
+		return '.';
+
 	case LYR_KEY_SLASH:
-		return shift ? '?' : '/';
+		return '/';
 
 	default:
 		return 0;
@@ -336,7 +479,7 @@ void DG_Init(void)
 	if (fb >= 0)
 		return;
 
-	fb = open(LYR_FB_DEVICE, O_WRONLY);
+	fb = open(LYR_FB_DEVICE, O_RDWR);
 	if (fb < 0) {
 		perror("doomgeneric: open framebuffer");
 		exit(1);
@@ -360,6 +503,21 @@ void DG_Init(void)
 		exit(1);
 	}
 
+	if (fb_info.width < DOOMGENERIC_RESX || fb_info.height < DOOMGENERIC_RESY) {
+		fprintf(
+			stderr,
+			"doomgeneric: framebuffer too small (%ux%u, need at least %ux%u)\n",
+			fb_info.width, fb_info.height, DOOMGENERIC_RESX, DOOMGENERIC_RESY);
+		exit(1);
+	}
+
+	fb_map = mmap(NULL, fb_info.size, PROT_WRITE, MAP_SHARED, fb, 0);
+	if (fb_map == MAP_FAILED) {
+		fb_map = NULL;
+		perror("doomgeneric: mmap framebuffer");
+		exit(1);
+	}
+
 	if (clock_gettime(CLOCK_REALTIME, &start_time) < 0) {
 		start_time.tv_sec = 0;
 		start_time.tv_nsec = 0;
@@ -371,12 +529,16 @@ void DG_Init(void)
 
 void DG_DrawFrame(void)
 {
-	if (fb < 0 || DG_ScreenBuffer == NULL)
+	if (fb_map == NULL || DG_ScreenBuffer == NULL)
 		return;
 
-	lseek(fb, 0, SEEK_SET);
-	write(fb, DG_ScreenBuffer,
-		  DOOMGENERIC_RESX * DOOMGENERIC_RESY * sizeof(*DG_ScreenBuffer));
+	size_t row_bytes = DOOMGENERIC_RESX * sizeof(*DG_ScreenBuffer);
+
+	for (int y = 0; y < DOOMGENERIC_RESY; y++) {
+		memcpy(fb_map + (size_t)y * fb_info.pitch,
+			   (const uint8_t *)DG_ScreenBuffer + (size_t)y * row_bytes,
+			   row_bytes);
+	}
 }
 
 void DG_SleepMs(uint32_t ms)
