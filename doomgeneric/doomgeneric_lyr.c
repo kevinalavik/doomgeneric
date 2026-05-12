@@ -587,5 +587,7 @@ int main(int argc, char **argv)
 	for (;;)
 		doomgeneric_Tick();
 
+	if (kbd_valid)
+		lyr_kbd_flush(&kbd);
 	return 0;
 }
