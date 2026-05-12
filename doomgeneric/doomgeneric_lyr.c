@@ -115,36 +115,27 @@ static void setup_terminal(void)
 		lyr_kbd_flush(&kbd);
 }
 
-/*
- * Modern Doom keyboard layout.
- *
- * Movement:
- *   W             forward
- *   S             backward
- *   A             strafe left
- *   D             strafe right
- *   Left arrow    turn left
- *   Right arrow   turn right
- *
- * Actions:
- *   Space         fire
- *   Ctrl          fire, alternate
- *   E             use/open
- *   Shift         run
- *
- * Menu/system:
- *   Esc           menu
- *   Enter         confirm
- *   Tab           automap
- *
- * Weapons:
- *   1-0           weapon slots
- *
- * Doom key values are mostly physical key identifiers, not translated text.
- * For ordinary letters, Doom expects uppercase ASCII.
- */
+static int doom_shift_active(const lyr_key_event_t *ev)
+{
+	int shift = (ev->mods & LYR_MOD_SHIFT) != 0;
+
+	if ((ev->mods & LYR_MOD_CAPS) && ev->keycode >= LYR_KEY_A &&
+		ev->keycode <= LYR_KEY_Z)
+		shift = !shift;
+
+	return shift;
+}
+
+static unsigned char doom_alpha_key(const lyr_key_event_t *ev,
+									unsigned char lower)
+{
+	return doom_shift_active(ev) ? (unsigned char)(lower - 'a' + 'A') : lower;
+}
+
 static unsigned char map_lyr_key_event(const lyr_key_event_t *ev)
 {
+	int shift = doom_shift_active(ev);
+
 	switch (ev->keycode) {
 	case LYR_KEY_ESC:
 		return KEY_ESCAPE;
@@ -158,21 +149,6 @@ static unsigned char map_lyr_key_event(const lyr_key_event_t *ev)
 
 	case LYR_KEY_BACKSPACE:
 		return KEY_BACKSPACE;
-
-	/*
-	 * Modern movement.
-	 */
-	case LYR_KEY_W:
-		return KEY_UPARROW;
-
-	case LYR_KEY_S:
-		return KEY_DOWNARROW;
-
-	case LYR_KEY_A:
-		return KEY_STRAFE_L;
-
-	case LYR_KEY_D:
-		return KEY_STRAFE_R;
 
 	case LYR_KEY_LEFT:
 		return KEY_LEFTARROW;
@@ -190,18 +166,12 @@ static unsigned char map_lyr_key_event(const lyr_key_event_t *ev)
 	case LYR_KEY_DOWN:
 		return KEY_DOWNARROW;
 
-	/*
-	 * Modern actions.
-	 */
 	case LYR_KEY_SPACE:
-		return KEY_FIRE;
+		return ' ';
 
 	case LYR_KEY_LEFTCTRL:
 	case LYR_KEY_RIGHTCTRL:
 		return KEY_FIRE;
-
-	case LYR_KEY_E:
-		return KEY_USE;
 
 	case LYR_KEY_LEFTSHIFT:
 	case LYR_KEY_RIGHTSHIFT:
@@ -338,136 +308,145 @@ static unsigned char map_lyr_key_event(const lyr_key_event_t *ev)
 	 * Number row: weapon slots.
 	 */
 	case LYR_KEY_1:
-		return '1';
+		return shift ? '!' : '1';
 
 	case LYR_KEY_2:
-		return '2';
+		return shift ? '@' : '2';
 
 	case LYR_KEY_3:
-		return '3';
+		return shift ? '#' : '3';
 
 	case LYR_KEY_4:
-		return '4';
+		return shift ? '$' : '4';
 
 	case LYR_KEY_5:
-		return '5';
+		return shift ? '%' : '5';
 
 	case LYR_KEY_6:
-		return '6';
+		return shift ? '^' : '6';
 
 	case LYR_KEY_7:
-		return '7';
+		return shift ? '&' : '7';
 
 	case LYR_KEY_8:
-		return '8';
+		return shift ? '*' : '8';
 
 	case LYR_KEY_9:
-		return '9';
+		return shift ? '(' : '9';
 
 	case LYR_KEY_0:
-		return '0';
+		return shift ? ')' : '0';
 
 	case LYR_KEY_MINUS:
-		return KEY_MINUS;
+		return shift ? '_' : '-';
 
 	case LYR_KEY_EQUAL:
-		return KEY_EQUALS;
+		return shift ? '+' : '=';
 
-	/*
-	 * Ordinary letter keys not used by the fixed modern layout.
-	 */
 	case LYR_KEY_Q:
-		return 'Q';
+		return doom_alpha_key(ev, 'q');
+
+	case LYR_KEY_W:
+		return doom_alpha_key(ev, 'w');
+
+	case LYR_KEY_E:
+		return doom_alpha_key(ev, 'e');
 
 	case LYR_KEY_R:
-		return 'R';
+		return doom_alpha_key(ev, 'r');
 
 	case LYR_KEY_T:
-		return 'T';
+		return doom_alpha_key(ev, 't');
 
 	case LYR_KEY_Y:
-		return 'Y';
+		return doom_alpha_key(ev, 'y');
 
 	case LYR_KEY_U:
-		return 'U';
+		return doom_alpha_key(ev, 'u');
 
 	case LYR_KEY_I:
-		return 'I';
+		return doom_alpha_key(ev, 'i');
 
 	case LYR_KEY_O:
-		return 'O';
+		return doom_alpha_key(ev, 'o');
 
 	case LYR_KEY_P:
-		return 'P';
+		return doom_alpha_key(ev, 'p');
+
+	case LYR_KEY_A:
+		return doom_alpha_key(ev, 'a');
+
+	case LYR_KEY_S:
+		return doom_alpha_key(ev, 's');
+
+	case LYR_KEY_D:
+		return doom_alpha_key(ev, 'd');
 
 	case LYR_KEY_F:
-		return 'F';
+		return doom_alpha_key(ev, 'f');
 
 	case LYR_KEY_G:
-		return 'G';
+		return doom_alpha_key(ev, 'g');
 
 	case LYR_KEY_H:
-		return 'H';
+		return doom_alpha_key(ev, 'h');
 
 	case LYR_KEY_J:
-		return 'J';
+		return doom_alpha_key(ev, 'j');
 
 	case LYR_KEY_K:
-		return 'K';
+		return doom_alpha_key(ev, 'k');
 
 	case LYR_KEY_L:
-		return 'L';
+		return doom_alpha_key(ev, 'l');
 
 	case LYR_KEY_Z:
-		return 'Z';
+		return doom_alpha_key(ev, 'z');
 
 	case LYR_KEY_X:
-		return 'X';
+		return doom_alpha_key(ev, 'x');
 
 	case LYR_KEY_C:
-		return 'C';
+		return doom_alpha_key(ev, 'c');
 
 	case LYR_KEY_V:
-		return 'V';
+		return doom_alpha_key(ev, 'v');
 
 	case LYR_KEY_B:
-		return 'B';
+		return doom_alpha_key(ev, 'b');
 
 	case LYR_KEY_N:
-		return 'N';
+		return doom_alpha_key(ev, 'n');
 
 	case LYR_KEY_M:
-		return 'M';
+		return doom_alpha_key(ev, 'm');
 
-	/*
-	 * Punctuation keys.
-	 */
 	case LYR_KEY_LEFTBRACE:
-		return '[';
+		return shift ? '{' : '[';
 
 	case LYR_KEY_RIGHTBRACE:
-		return ']';
+		return shift ? '}' : ']';
 
 	case LYR_KEY_BACKSLASH:
-		return '\\';
+		return shift ? '|' : '\\';
 
 	case LYR_KEY_SEMICOLON:
-		return ';';
+		return shift ? ':' : ';';
 
 	case LYR_KEY_APOSTROPHE:
-		return '\'';
+		return shift ? '"' : '\'';
 
 	case LYR_KEY_GRAVE:
-		return '`';
+		return shift ? '~' : '`';
 
 	case LYR_KEY_COMMA:
-		return ',';
+		return shift ? '<' : ',';
 
 	case LYR_KEY_DOT:
-		return '.';
+		return shift ? '>' : '.';
 
 	case LYR_KEY_SLASH:
-		return '/';
+		return shift ? '?' : '/';
 
 	default:
 		return 0;
